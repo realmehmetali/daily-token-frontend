@@ -1,3 +1,4 @@
+// components/DailyTokenClaimOnly.tsx
 "use client";
 
 import React, { useMemo, useState } from "react";
@@ -15,32 +16,25 @@ import {
   ACTION_CLAIM,
 } from "@/lib/env";
 
-/* ----------------------------- Reward schedule ---------------------------- */
+/* reward schedule */
 function baseRateByStreak(streakDays: number): number {
   if (streakDays <= 0) return 0;
   const level = Math.min(100 - 1, Math.floor((streakDays - 1) / 7)); // 0..99
   return level + 1; // 1..100
 }
 
-/* ------------------------------- FX helpers ------------------------------- */
+/* fx */
 function burstConfetti(intense = 1) {
   const count = Math.floor(200 * intense);
   const defaults = { origin: { y: 0.7 } } as const;
-  try {
-    confetti({ ...defaults, spread: 100, particleCount: count, scalar: 1.05 });
-  } catch {}
+  try { confetti({ ...defaults, spread: 100, particleCount: count, scalar: 1.05 }); } catch {}
 }
 function playBeep() {
-  const a = new Audio(
-    "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQgAAAABAQEBAQEB"
-  );
-  try {
-    a.currentTime = 0;
-    a.play();
-  } catch {}
+  const a = new Audio("data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQgAAAABAQEBAQEB");
+  try { a.currentTime = 0; a.play(); } catch {}
 }
 
-/* --------------------------- Time formatting util ------------------------- */
+/* time helpers */
 function formatETA(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) return "0m";
   const s = Math.ceil(ms / 1000);
@@ -49,8 +43,7 @@ function formatETA(ms: number): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
-/* -------------------------- Daily signal helper --------------------------- */
-// unique per day so users can claim again tomorrow
+/* daily signal for claim */
 function todayYmdUTC() {
   const d = new Date();
   const y = d.getUTCFullYear();
@@ -59,13 +52,12 @@ function todayYmdUTC() {
   return `${y}-${m}-${day}`;
 }
 
-/* --------------------------------- App ----------------------------------- */
 export default function DailyTokenClaimOnly() {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
   const { writeContractAsync } = useWriteContract();
 
-  // Local UI state
+  // UI state
   const [streak, setStreak] = useState(0);
   const [levels, setLevels] = useState(0);
   const [lastClaimAt, setLastClaimAt] = useState<number | null>(null);
@@ -84,7 +76,7 @@ export default function DailyTokenClaimOnly() {
     accent: "#A78BFA",
   } as const;
 
-  // Streak pill
+  // streak pill
   const streakActive = useMemo(() => {
     if (lastClaimAt == null) return false;
     return Date.now() - lastClaimAt < 48 * 3600 * 1000;
@@ -93,7 +85,7 @@ export default function DailyTokenClaimOnly() {
     ? { label: "Streak active", color: "#065F46", bg: "#D1FAE5" }
     : { label: "Streak ended", color: "#7F1D1D", bg: "#FEE2E2" };
 
-  // Timing
+  // timing
   const now = Date.now();
   const wallet = isConnected ? address : null;
   const canClaim = useMemo(() => {
@@ -108,30 +100,24 @@ export default function DailyTokenClaimOnly() {
   }, [canClaim, lastClaimAt, now]);
   const nextClaimLabel = useMemo(() => formatETA(nextClaimInMs), [nextClaimInMs]);
 
-  /* ---------------- Base/day and weekly progress (DISPLAY LOGIC) ----------- */
+  // display calcs
   const dayRate = useMemo(() => baseRateByStreak(streak + 1), [streak]);
-  const completedInWeek = useMemo(() => streak % 7, [streak]); // 0..6
+  const completedInWeek = useMemo(() => streak % 7, [streak]);
   const progressPct = useMemo(() => (completedInWeek / 7) * 100, [completedInWeek]);
   const ringProgress = completedInWeek / 7;
-
-  const nextDayInWeek = useMemo(() => (streak % 7) + 1, [streak]); // 1..7
+  const nextDayInWeek = useMemo(() => (streak % 7) + 1, [streak]);
   const isSeventhNext = nextDayInWeek === 7;
   const projectedPayout = dayRate * (isSeventhNext ? 3 : 1);
 
-  // We don't programmatically switch chains here (to avoid SSR/config issues).
-  // Just prompt the user if not on World Chain.
-  async function ensureWorldchain() {
-    if (chainId !== WORLDCHAIN_ID) {
-      alert("Please switch your wallet to World Chain (ID 480) in World App, then try again.");
-    }
-  }
-
-  // World ID → on-chain claimVerified → update local UI (for visuals)
+  // on success of CLAIM proof -> on-chain tx
   async function handleVerified(res: ISuccessResult) {
     try {
       setClaiming(true);
 
-      if (chainId !== WORLDCHAIN_ID) await ensureWorldchain();
+      if (chainId !== WORLDCHAIN_ID) {
+        alert("Please switch your wallet to World Chain (ID 480) and try again.");
+        return;
+      }
 
       await writeContractAsync({
         address: HUB,
@@ -167,10 +153,8 @@ export default function DailyTokenClaimOnly() {
     }
   }
 
-  // Per-day signal for claim step (so proofs are unique per day)
   const claimSignal = address ? `${address}:${todayYmdUTC()}` : "0x0";
 
-  /* --------------------------------- Render -------------------------------- */
   return (
     <div className="min-h-screen pb-24" style={{ background: theme.bg, color: theme.text }}>
       {/* Header */}
@@ -192,7 +176,6 @@ export default function DailyTokenClaimOnly() {
               <Sparkles className="h-5 w-5" style={{ color: theme.primary }} />
             </motion.div>
 
-            {/* Level + progress ring */}
             <div className="ml-2 flex items-center gap-2">
               <div className="relative">
                 <svg width="28" height="28" viewBox="0 0 36 36" className="-rotate-90">
@@ -249,7 +232,6 @@ export default function DailyTokenClaimOnly() {
 
       {/* Main */}
       <main className="mx-auto max-w-5xl px-4 py-6 space-y-6">
-        {/* Claim card */}
         <section className="rounded-3xl border p-5" style={{ background: "#FFFFFF", borderColor: theme.border }}>
           <div className="text-lg font-semibold">Today’s Reward</div>
           <div className="text-4xl font-extrabold mt-2" style={{ color: theme.primary }}>
@@ -259,9 +241,7 @@ export default function DailyTokenClaimOnly() {
           {/* Progress bar */}
           <div className="mt-4">
             <div className="flex items-center justify-between text-xs mb-1">
-              <div>
-                Level <span className="font-semibold">{levels}</span>
-              </div>
+              <div>Level <span className="font-semibold">{levels}</span></div>
               <div>Progress: {completedInWeek}/7</div>
             </div>
             <div className="w-full h-5 rounded-full overflow-hidden" style={{ background: "#EEF2FF" }}>
@@ -272,7 +252,7 @@ export default function DailyTokenClaimOnly() {
             </div>
           </div>
 
-          {/* Step 1 — VERIFY (no tx, ORB-only) */}
+          {/* Step 1 — VERIFY (no tx) */}
           <div className="mt-6">
             <IDKitWidget
               app_id={APP_ID}
@@ -282,10 +262,9 @@ export default function DailyTokenClaimOnly() {
               onSuccess={() => setIsVerified(true)}
               onError={(err) => {
                 console.error("World ID verify error:", err);
-                const msg =
-                  typeof err === "string"
-                    ? err
-                    : (err as any)?.code || (err as any)?.message || JSON.stringify(err);
+                const msg = typeof err === "string"
+                  ? err
+                  : (err as any)?.code || (err as any)?.message || JSON.stringify(err);
                 alert("World ID verify error: " + msg);
               }}
             >
@@ -296,7 +275,7 @@ export default function DailyTokenClaimOnly() {
                       alert("Open in World App and connect your wallet first.");
                       return;
                     }
-                    open(); // verify human (stays inside World App)
+                    open(); // native sheet inside World App (Mini App)
                   }}
                   disabled={claiming}
                   className="w-full font-semibold py-3 rounded-2xl shadow active:translate-y-1 disabled:opacity-60"
@@ -311,20 +290,19 @@ export default function DailyTokenClaimOnly() {
             </IDKitWidget>
           </div>
 
-          {/* Step 2 — CLAIM (fresh proof + on-chain tx) */}
+          {/* Step 2 — CLAIM (fresh proof → on-chain tx) */}
           <div className="mt-3">
             <IDKitWidget
               app_id={APP_ID}
               action={ACTION_CLAIM}
-              signal={claimSignal}
+              signal={address ? `${address}:${todayYmdUTC()}` : "0x0"}
               verification_level={VerificationLevel.Orb}
               onSuccess={(res) => handleVerified(res as ISuccessResult)}
               onError={(err) => {
                 console.error("World ID claim error:", err);
-                const msg =
-                  typeof err === "string"
-                    ? err
-                    : (err as any)?.code || (err as any)?.message || JSON.stringify(err);
+                const msg = typeof err === "string"
+                  ? err
+                  : (err as any)?.code || (err as any)?.message || JSON.stringify(err);
                 alert("World ID claim error: " + msg);
               }}
             >
@@ -341,12 +319,11 @@ export default function DailyTokenClaimOnly() {
                     }
                     if (!canClaim) return;
 
-                    const proceed = () => open(); // proof → handleVerified() → wallet confirms tx
                     if (chainId !== WORLDCHAIN_ID) {
-                      ensureWorldchain().finally(proceed);
-                    } else {
-                      proceed();
+                      alert("Please switch your wallet to World Chain (ID 480) and try again.");
+                      return;
                     }
+                    open(); // proof → handleVerified() → tx
                   }}
                   disabled={!isVerified || !canClaim || !address || claiming}
                   className="w-full font-semibold py-3 rounded-2xl shadow active:translate-y-1 disabled:opacity-60"
@@ -392,25 +369,3 @@ export default function DailyTokenClaimOnly() {
     </div>
   );
 }
-
-/* ------------------------------ Dev Smoke Tests --------------------------- */
-function runDevTests() {
-  try {
-    console.group("DailyTokenClaimOnly — tests");
-    console.assert(formatETA(0) === "0m", "formatETA(0) should be '0m'");
-    console.assert(formatETA(59_000) === "1m", "formatETA(59s) -> '1m'");
-    console.assert(formatETA(60 * 60 * 1000) === "1h 0m", "formatETA(1h)");
-    const baseAt = (tc: number) => Math.min(99, Math.floor(tc / 7)) + 1;
-    console.assert(baseAt(0) === 1, "tc0 -> level0 -> base1");
-    console.assert(baseAt(6) === 1, "tc6 -> level0 -> base1");
-    console.assert(baseAt(7) === 2, "tc7 -> level1 -> base2");
-    console.assert(baseAt(70) === 11, "tc70 -> level10 -> base11");
-    const nextDayIdx = (tc: number) => (tc % 7) + 1;
-    console.assert(nextDayIdx(0) === 1 && nextDayIdx(6) === 7, "day index calc");
-    console.log("✅ All tests passed");
-    console.groupEnd();
-  } catch (e) {
-    console.error("❌ Tests failed", e);
-  }
-}
-if (typeof window !== "undefined") setTimeout(runDevTests, 0);

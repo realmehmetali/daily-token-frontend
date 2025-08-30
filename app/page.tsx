@@ -1,4 +1,6 @@
-import DailyTokenUI from "@/components/DailyTokenUI";
+// app/page.tsx
+import DailyTokenClaimOnly from "@/components/DailyTokenClaimOnly";
+
 export default function Page() {
-  return <DailyTokenUI />;
+  return <DailyTokenClaimOnly />;
 }

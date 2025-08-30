@@ -1,40 +1,63 @@
-// frontend/components/ClaimCard.tsx
 "use client";
 
-import { useMemo, useState } from "react";
-import { IDKitWidget, type VerificationResponse } from "@worldcoin/idkit";
-import { useAccount, useChainId, useSwitchChain, useWriteContract } from "wagmi";
+import { useState } from "react";
+import {
+  IDKitWidget,
+  type ISuccessResult,
+  VerificationLevel,
+} from "@worldcoin/idkit";
+import {
+  useAccount,
+  useChainId,
+  useSwitchChain,
+  useWriteContract,
+} from "wagmi";
 import hubAbi from "@/abis/DailyClaimHub.json";
+
+type Props = {
+  onClaimed?: (payout: number, triple: boolean) => void;
+  // Must return a ReactElement so it satisfies IDKitWidget’s render-prop type
+  children?: (open: () => void, pending: boolean) => React.ReactElement;
+};
 
 const WORLDCHAIN_ID = 480 as const;
 
-function reqEnv(key: string): string {
-  const v = process.env[key];
-  if (!v) throw new Error(`Missing ${key} in .env.local`);
-  return v;
-}
+// Client envs must be referenced statically:
+const HUB = process.env.NEXT_PUBLIC_HUB as `0x${string}`;
+const APP_ID = process.env.NEXT_PUBLIC_WORLD_ID_APP_ID as `app_${string}`;
+const ACTION = process.env.NEXT_PUBLIC_WORLD_ID_ACTION as string;
+const VERIFICATION_LEVEL = VerificationLevel.Orb;
 
-export default function ClaimCard() {
-  const { address, isConnected } = useAccount();
+export default function ClaimVerifiedCard({ onClaimed, children }: Props) {
+  const { address } = useAccount();
   const chainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
   const { writeContractAsync } = useWriteContract();
-
   const [pending, setPending] = useState(false);
 
-  const HUB = useMemo(() => reqEnv("NEXT_PUBLIC_HUB") as `0x${string}`, []);
-  const APP_ID = useMemo(() => reqEnv("NEXT_PUBLIC_WORLD_ID_APP_ID"), []);
-  const ACTION = useMemo(() => reqEnv("NEXT_PUBLIC_WORLD_ID_ACTION"), []);
+  async function ensureWorldchain() {
+    if (chainId !== WORLDCHAIN_ID && switchChainAsync) {
+      try {
+        await switchChainAsync({ chainId: WORLDCHAIN_ID });
+      } catch {
+        alert("Please switch to World Chain (ID 480) in your wallet.");
+        throw new Error("Wrong chain");
+      }
+    }
+  }
 
-  async function handleSuccess(res: VerificationResponse) {
+  async function handleSuccess(res: ISuccessResult) {
+    await ensureWorldchain();
+    setPending(true);
     try {
-      setPending(true);
-      await writeContractAsync({
+      const txHash = await writeContractAsync({
         address: HUB,
         abi: (hubAbi as any).abi ?? hubAbi,
         functionName: "claimVerified",
         args: [res.merkle_root, res.nullifier_hash, res.proof],
       });
+      console.log("claimVerified tx:", txHash);
+      onClaimed?.(0, false);
       alert("✅ Claimed successfully!");
     } catch (err: any) {
       console.error("claimVerified failed:", err);
@@ -44,55 +67,37 @@ export default function ClaimCard() {
     }
   }
 
-  async function ensureWorldchain() {
-    if (chainId !== WORLDCHAIN_ID && switchChainAsync) {
-      try {
-        await switchChainAsync({ chainId: WORLDCHAIN_ID });
-      } catch {
-        alert("Please switch to World Chain (ID 480) in your wallet.");
-      }
-    }
-  }
-
   return (
-    <div className="p-4 border rounded-xl max-w-md">
-      <h2 className="font-bold mb-3">Daily Claim (Verified-only)</h2>
-
-      {!isConnected && <p className="text-sm opacity-70 mb-2">Open in World App or connect a wallet.</p>}
-
-      <IDKitWidget
-        app_id={APP_ID}
-        action={ACTION}
-        signal={address ?? "0x0"}
-        verification_level="orb"
-        onSuccess={handleSuccess}
-        onError={(err) => {
-          console.error("World ID error:", err);
-          const msg =
-            typeof err === "string"
-              ? err
-              : (err as any)?.code || (err as any)?.message || JSON.stringify(err);
-          alert("World ID error: " + msg);
-        }}
-      >
-        {({ open }) => (
+    <IDKitWidget
+      app_id={APP_ID}
+      action={ACTION}
+      signal={address ?? "0x0"}
+      verification_level={VERIFICATION_LEVEL}
+      onSuccess={handleSuccess}
+      onError={(err) => {
+        console.error("World ID error:", err);
+        const msg =
+          typeof err === "string"
+            ? err
+            : (err as any)?.code ||
+              (err as any)?.message ||
+              JSON.stringify(err);
+        alert("World ID error: " + msg);
+      }}
+    >
+      {({ open }) =>
+        children ? (
+          children(open, pending)
+        ) : (
           <button
-            onClick={() => {
-              if (chainId !== WORLDCHAIN_ID) {
-                ensureWorldchain().finally(open);
-              } else {
-                open();
-              }
-            }}
+            onClick={open}
             disabled={pending}
             className="px-4 py-2 bg-green-600 text-white rounded-xl disabled:opacity-60"
           >
             {pending ? "Claiming…" : "Claim with World ID"}
           </button>
-        )}
-      </IDKitWidget>
-
-      <p className="text-xs mt-3 opacity-60">Requires Orb verification · Network: World Chain (480)</p>
-    </div>
+        )
+      }
+    </IDKitWidget>
   );
 }

@@ -4,7 +4,7 @@ import React, { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
 import { Sparkles, RefreshCw, Trophy, CircleDollarSign } from "lucide-react";
-import { IDKitWidget, VerificationResponse } from "@worldcoin/idkit";
+import { IDKitWidget, ISuccessResult, VerificationLevel } from "@worldcoin/idkit";
 import { useAccount, useChainId, useSwitchChain, useWriteContract } from "wagmi";
 import hubAbi from "@/abis/DailyClaimHub.json";
 import { HUB, APP_ID, ACTION, CHAIN_ID as WORLDCHAIN_ID } from "@/lib/env";
@@ -115,7 +115,7 @@ export default function DailyTokenClaimOnly() {
   }
 
   // World ID → on-chain claimVerified → update local UI (for visuals)
-  async function handleVerified(res: VerificationResponse) {
+  async function handleVerified(res: ISuccessResult) {
     try {
       setClaiming(true);
 
@@ -263,7 +263,7 @@ export default function DailyTokenClaimOnly() {
               app_id={APP_ID}
               action={ACTION}
               signal={address ?? "0x0"}
-              verification_level="orb"
+              verification_level={VerificationLevel.Orb}
               onSuccess={handleVerified}
               onError={(err) => {
                 console.error("World ID error:", err);

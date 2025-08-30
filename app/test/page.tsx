@@ -1,8 +1,8 @@
 "use client";
 
-import { IDKitWidget, type VerificationResponse } from "@worldcoin/idkit";
+import { IDKitWidget, type ISuccessResult } from "@worldcoin/idkit";
 
-// ✅ Read env into typed constants (works with `app_staging_...` too)
+// ✅ Read env into typed constants
 const APP_ID = process.env.NEXT_PUBLIC_WORLD_ID_APP_ID as `app_${string}`;
 const ACTION = process.env.NEXT_PUBLIC_WORLD_ID_ACTION as string;
 
@@ -15,10 +15,9 @@ export default function TestPage() {
         app_id={APP_ID}
         action={ACTION}
         signal="0x123"
-        verification_level="orb" // optional, but you want verified-only
-        onSuccess={(res: VerificationResponse) => {
+        onSuccess={(res: ISuccessResult) => {
           console.log("✅ Proof:", res);
-          alert("Got proof. Check console.");
+          alert("Proof captured. You can now call claimVerified on-chain.");
         }}
         onError={(err) => {
           console.error("World ID error:", err);

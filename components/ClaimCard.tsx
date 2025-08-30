@@ -1,23 +1,32 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { IDKitWidget, VerificationResponse } from "@worldcoin/idkit";
-import { useAccount, useChainId, useSwitchChain, useWriteContract } from "wagmi";
+import { useState } from "react";
+import {
+  IDKitWidget,
+  type ISuccessResult,
+  VerificationLevel,
+} from "@worldcoin/idkit";
+import {
+  useAccount,
+  useChainId,
+  useSwitchChain,
+  useWriteContract,
+} from "wagmi";
 import hubAbi from "@/abis/DailyClaimHub.json";
 
 type Props = {
-  // Called after successful on-chain claim so the parent can animate/update UI
   onClaimed?: (payout: number, triple: boolean) => void;
-  // Let parent render the exact button style (so it matches your design)
-  children?: (open: () => void, pending: boolean) => React.ReactNode;
+  // Must return a ReactElement (not undefined / broad ReactNode), to satisfy IDKitWidget’s render-prop typing
+  children?: (open: () => void, pending: boolean) => React.ReactElement;
 };
 
 const WORLDCHAIN_ID = 480 as const;
 
-// NOTE: envs must be referenced statically in Next
+// Env must be referenced statically on the client
 const HUB = process.env.NEXT_PUBLIC_HUB as `0x${string}`;
-const APP_ID = process.env.NEXT_PUBLIC_WORLD_ID_APP_ID!;
-const ACTION = process.env.NEXT_PUBLIC_WORLD_ID_ACTION!;
+const APP_ID = process.env.NEXT_PUBLIC_WORLD_ID_APP_ID as `app_${string}`;
+const ACTION = process.env.NEXT_PUBLIC_WORLD_ID_ACTION as string;
+const VERIFICATION_LEVEL = VerificationLevel.Orb;
 
 export default function ClaimCard({ onClaimed, children }: Props) {
   const { address } = useAccount();
@@ -37,25 +46,18 @@ export default function ClaimCard({ onClaimed, children }: Props) {
     }
   }
 
-  async function handleSuccess(res: VerificationResponse) {
+  async function handleSuccess(res: ISuccessResult) {
     await ensureWorldchain();
     setPending(true);
     try {
-      // call claimVerified(merkle_root, nullifier_hash, proof)
       const txHash = await writeContractAsync({
         address: HUB,
         abi: (hubAbi as any).abi ?? hubAbi,
         functionName: "claimVerified",
         args: [res.merkle_root, res.nullifier_hash, res.proof],
       });
-
       console.log("claimVerified tx:", txHash);
-
-      // Optional: if your hub emits Claimed(user, amount, totalClaims, level, triple),
-      // you could read it from receipt logs. For now, pass a conservative hint
-      // (parent can compute final numbers locally if desired).
-      onClaimed?.(0 /* unknown exact */, false /* unknown until decoded */);
-
+      onClaimed?.(0, false);
       alert("✅ Claimed successfully!");
     } catch (err: any) {
       console.error("claimVerified failed:", err);
@@ -70,7 +72,7 @@ export default function ClaimCard({ onClaimed, children }: Props) {
       app_id={APP_ID}
       action={ACTION}
       signal={address ?? "0x0"}
-      verification_level="orb"     // ✅ verified-only
+      verification_level={VERIFICATION_LEVEL}
       onSuccess={handleSuccess}
       onError={(err) => {
         console.error("World ID error:", err);
@@ -85,7 +87,7 @@ export default function ClaimCard({ onClaimed, children }: Props) {
     >
       {({ open }) =>
         children ? (
-          children(open, pending)
+          children(open, pending) // typed to always return a ReactElement
         ) : (
           <button
             onClick={open}

@@ -8,7 +8,7 @@ import ClaimCard from "@/components/ClaimCard";
 
 /* ----------------------------- Reward schedule ---------------------------- */
 function baseRateByStreak(streakDays: number): number {
-  if (streakDays <= 0) return 0; // no streak yet
+  if (streakDays <= 0) return 0;
   const level = Math.min(100 - 1, Math.floor((streakDays - 1) / 7)); // 0..99
   return level + 1; // 1..100
 }
@@ -44,13 +44,12 @@ function formatETA(ms: number): string {
 export default function DailyTokenUI() {
   const [wallet, setWallet] = useState<string | null>(null);
 
-  // Claim state (local preview counters for look & feel)
-  const [streak, setStreak] = useState(0);      // toplam ardışık claim günleri
-  const [levels, setLevels] = useState(0);      // tamamlanan level sayısı
+  // Local preview counters for look & feel (frontend UI-only)
+  const [streak, setStreak] = useState(0);
+  const [levels, setLevels] = useState(0);
   const [lastClaimAt, setLastClaimAt] = useState<number | null>(null);
   const [tokens, setTokens] = useState(0);
 
-  // UI state
   const [claiming, setClaiming] = useState(false);
   const [toast, setToast] = useState<null | { title: string; desc?: string }>(null);
 
@@ -63,16 +62,15 @@ export default function DailyTokenUI() {
     accent: "#A78BFA",
   } as const;
 
-  // Streak status indicator: aktif = son claim < 48h
+  // Streak status (active if last claim < 48h)
   const streakActive = useMemo(() => {
     if (lastClaimAt == null) return false;
     return Date.now() - lastClaimAt < 48 * 3600 * 1000;
   }, [lastClaimAt]);
   const streakStatus = streakActive
     ? { label: "Streak active", color: "#065F46", bg: "#D1FAE5" }
-    : { label: "Streak broken", color: "#7F1D1D", bg: "#FEE2E2" };
+    : { label: "Streak ended", color: "#7F1D1D", bg: "#FEE2E2" };
 
-  // Timing
   const now = Date.now();
   const canClaim = useMemo(() => {
     if (!wallet) return false;
@@ -87,25 +85,17 @@ export default function DailyTokenUI() {
 
   const nextClaimLabel = useMemo(() => formatETA(nextClaimInMs), [nextClaimInMs]);
 
-  /* ---------------- Base/day and weekly progress (DISPLAY LOGIC) ----------- */
   const dayRate = useMemo(() => baseRateByStreak(streak + 1), [streak]);
-
-  // Progress **tamamlanan** günleri gösterir:
-  // ilk claim sonrası streak=1 → completedInWeek = 1 → "1/7"
-  // 7. claim sonrası streak=7 → completedInWeek = 0 (yeni level) → "0/7"
-  const completedInWeek = useMemo(() => streak % 7, [streak]); // 0..6 (7 tamamlanınca 0 olur)
+  const completedInWeek = useMemo(() => streak % 7, [streak]);
   const progressPct = useMemo(() => (completedInWeek / 7) * 100, [completedInWeek]);
   const ringProgress = completedInWeek / 7;
 
-  // Bugünkü claim önizlemesi için "gelecek gün" bilgisi (1..7)
   const nextDayInWeek = useMemo(() => (streak % 7) + 1, [streak]);
   const isSeventhNext = nextDayInWeek === 7;
   const projectedPayout = dayRate * (isSeventhNext ? 3 : 1);
 
-  /* ------------------------------ Wallet actions --------------------------- */
-  async function onConnect() {
-    // World App will connect wallet automatically later; this is just for local preview
-    setWallet("0xDemo...WALLET");
+  function onConnectPreview() {
+    setWallet("0xDemo...WALLET"); // World App will connect in production
     setToast({ title: "Wallet connected", desc: "Demo address for preview" });
   }
 
@@ -137,7 +127,6 @@ export default function DailyTokenUI() {
     }
   }
 
-  /* --------------------------------- Render -------------------------------- */
   return (
     <div className="min-h-screen pb-24" style={{ background: theme.bg, color: theme.text }}>
       {/* Header */}
@@ -159,7 +148,7 @@ export default function DailyTokenUI() {
               <Sparkles className="h-5 w-5" style={{ color: theme.primary }} />
             </motion.div>
 
-            {/* Level with trophy + progress ring (completed days) */}
+            {/* Level with trophy + circular progress */}
             <div className="ml-2 flex items-center gap-2">
               <div className="relative">
                 <svg width="28" height="28" viewBox="0 0 36 36" className="-rotate-90">
@@ -202,7 +191,7 @@ export default function DailyTokenUI() {
             </div>
             {!wallet ? (
               <button
-                onClick={onConnect}
+                onClick={onConnectPreview}
                 className="inline-flex items-center gap-2 rounded-2xl px-4 py-2 font-semibold shadow active:translate-y-[2px]"
                 style={{ background: theme.primary, color: "#052e1a" }}
               >
@@ -230,7 +219,7 @@ export default function DailyTokenUI() {
             +{projectedPayout} TOK
           </div>
 
-          {/* Progress bar (completed days) */}
+          {/* Progress bar */}
           <div className="mt-4">
             <div className="flex items-center justify-between text-xs mb-1">
               <div>
@@ -246,7 +235,7 @@ export default function DailyTokenUI() {
             </div>
           </div>
 
-          {/* Streak pill (moved under progress bar) */}
+          {/* Streak pill */}
           <div className="mt-4">
             <span
               className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border font-semibold text-xs"
@@ -257,14 +246,9 @@ export default function DailyTokenUI() {
             </span>
           </div>
 
-          {/* VERIFIED-ONLY BUTTON (World ID) — styled to your UI */}
+          {/* VERIFIED-ONLY BUTTON wired via ClaimCard render-prop */}
           <div className="mt-4">
-            <ClaimCard
-              onClaimed={() => {
-                // Update visuals + effects after on-chain success
-                afterOnChainClaim();
-              }}
-            >
+            <ClaimCard onClaimed={() => afterOnChainClaim()}>
               {(open, pending) => (
                 <button
                   onClick={open}
@@ -301,31 +285,3 @@ export default function DailyTokenUI() {
     </div>
   );
 }
-
-/* ------------------------------ Dev Smoke Tests --------------------------- */
-function runDevTests() {
-  try {
-    console.group("DailyTokenClaimOnly — tests");
-    // formatETA
-    console.assert(formatETA(0) === "0m", "formatETA(0) should be '0m'");
-    console.assert(formatETA(59_000) === "1m", "formatETA(59s) -> '1m'");
-    console.assert(formatETA(60 * 60 * 1000) === "1h 0m", "formatETA(1h)");
-
-    // Level mapping via totalClaims
-    const baseAt = (tc:number)=> Math.min(99, Math.floor(tc/7)) + 1;
-    console.assert(baseAt(0) === 1, "tc0 -> level0 -> base1");
-    console.assert(baseAt(6) === 1, "tc6 -> level0 -> base1");
-    console.assert(baseAt(7) === 2, "tc7 -> level1 -> base2");
-    console.assert(baseAt(70) === 11, "tc70 -> level10 -> base11");
-
-    // 3x preview logic
-    const nextDayIdx = (tc:number)=> (tc % 7) + 1;
-    console.assert(nextDayIdx(0) === 1 && nextDayIdx(6) === 7, "day index calc");
-
-    console.log("✅ All tests passed");
-    console.groupEnd();
-  } catch (e) {
-    console.error("❌ Tests failed", e);
-  }
-}
-if (typeof window !== "undefined") setTimeout(runDevTests, 0);

@@ -22,7 +22,7 @@ function burstConfetti(intense = 1) {
   const defaults = { origin: { y: 0.7 } } as const;
   try {
     confetti({ ...defaults, spread: 100, particleCount: count, scalar: 1.05 });
-  } catch { }
+  } catch {}
 }
 function playBeep() {
   const a = new Audio(
@@ -31,7 +31,7 @@ function playBeep() {
   try {
     a.currentTime = 0;
     a.play();
-  } catch { }
+  } catch {}
 }
 
 /* --------------------------- Time formatting util ------------------------- */
@@ -43,6 +43,16 @@ function formatETA(ms: number): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
+/* -------------------------- Daily signal helper --------------------------- */
+// Makes the claim signal unique per day so users can claim again tomorrow.
+function todayYmdUTC() {
+  const d = new Date();
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 /* --------------------------------- App ----------------------------------- */
 export default function DailyTokenClaimOnly() {
   // Wallet info from World App (wagmi)
@@ -52,13 +62,12 @@ export default function DailyTokenClaimOnly() {
   const { writeContractAsync } = useWriteContract();
 
   // Local UI state
-  const [isVerified, setIsVerified] = useState(false);
-
   const [streak, setStreak] = useState(0);
   const [levels, setLevels] = useState(0);
   const [lastClaimAt, setLastClaimAt] = useState<number | null>(null);
   const [tokens, setTokens] = useState(0);
 
+  const [isVerified, setIsVerified] = useState(false); // ✅ new: human verified flag
   const [claiming, setClaiming] = useState(false);
   const [toast, setToast] = useState<null | { title: string; desc?: string }>(null);
 
@@ -156,6 +165,9 @@ export default function DailyTokenClaimOnly() {
       setClaiming(false);
     }
   }
+
+  // Build a per-day signal for the *claim* step (so proofs are unique per day)
+  const claimSignal = address ? `${address}:${todayYmdUTC()}` : "0x0";
 
   /* --------------------------------- Render -------------------------------- */
   return (
@@ -259,22 +271,22 @@ export default function DailyTokenClaimOnly() {
             </div>
           </div>
 
-          {/* Verify & Claim (ORB only) */}
           {/* Step 1 — VERIFY (Connect = human check only, no tx) */}
           <div className="mt-6">
             <IDKitWidget
               app_id={APP_ID}
               action={ACTION}
-              signal={address ?? "0x0"}                // any stable string is fine here
+              signal={address ?? "0x0"} // any stable string is fine here
               verification_level={VerificationLevel.Orb}
               onSuccess={() => {
-                // user proved they’re human — mark verified
-                setIsVerified(true);
-                // (we do NOT call the contract here)
+                setIsVerified(true); // mark human verified
               }}
               onError={(err) => {
                 console.error("World ID error:", err);
-                const msg = typeof err === "string" ? err : (err as any)?.message || JSON.stringify(err);
+                const msg =
+                  typeof err === "string"
+                    ? err
+                    : (err as any)?.code || (err as any)?.message || JSON.stringify(err);
                 alert("World ID error: " + msg);
               }}
             >
@@ -285,11 +297,15 @@ export default function DailyTokenClaimOnly() {
                       alert("Please open in World App and connect your wallet first.");
                       return;
                     }
-                    open(); // just verify; no chain switching needed for verification
+                    // No chain switching needed to just verify
+                    open(); // World ID popup → Approve/Cancel
                   }}
-                  className="w-full font-semibold py-3 rounded-2xl shadow active:translate-y-1 disabled:opacity-60"
-                  style={{ background: isVerified ? "#D1FAE5" : "#34D399", color: "#052e1a" }}
                   disabled={claiming}
+                  className="w-full font-semibold py-3 rounded-2xl shadow active:translate-y-1 disabled:opacity-60"
+                  style={{
+                    background: isVerified ? "#D1FAE5" : theme.primary,
+                    color: "#052e1a",
+                  }}
                 >
                   {isVerified ? "Verified ✅" : "Connect (verify with World ID)"}
                 </button>
@@ -302,14 +318,15 @@ export default function DailyTokenClaimOnly() {
             <IDKitWidget
               app_id={APP_ID}
               action={ACTION}
-              // If you added the helper above, prefer the daily signal:
-              // signal={claimSignal}
-              signal={address ?? "0x0"}
+              signal={claimSignal} // per-day signal → repeatable daily claims
               verification_level={VerificationLevel.Orb}
-              onSuccess={handleVerified}               // this calls your contract + updates UI
+              onSuccess={handleVerified} // verify → on-chain claim → wallet tx confirm
               onError={(err) => {
                 console.error("World ID error:", err);
-                const msg = typeof err === "string" ? err : (err as any)?.message || JSON.stringify(err);
+                const msg =
+                  typeof err === "string"
+                    ? err
+                    : (err as any)?.code || (err as any)?.message || JSON.stringify(err);
                 alert("World ID error: " + msg);
               }}
             >
@@ -325,17 +342,18 @@ export default function DailyTokenClaimOnly() {
                       return;
                     }
                     if (!canClaim) return;
-                    // for claim we *do* need to be on World Chain to send the tx
+
+                    // For claim we *do* need to be on World Chain to send the tx
                     if (chainId !== WORLDCHAIN_ID) {
-                      ensureWorldchain().finally(open);
+                      ensureWorldchain().finally(open); // switch → then open IDKit
                     } else {
-                      open(); // verify again → fresh proof → handleVerified() → wallet tx
+                      open(); // World ID → success → handleVerified() → wallet tx
                     }
                   }}
                   disabled={!isVerified || !canClaim || !address || claiming}
                   className="w-full font-semibold py-3 rounded-2xl shadow active:translate-y-1 disabled:opacity-60"
                   style={{
-                    background: isVerified && canClaim && address ? "#34D399" : "#D1FAE5",
+                    background: isVerified && canClaim && address ? theme.primary : "#D1FAE5",
                     color: isVerified && canClaim && address ? "#052e1a" : "#065F46",
                   }}
                 >
@@ -384,12 +402,12 @@ function runDevTests() {
     console.assert(formatETA(0) === "0m", "formatETA(0) should be '0m'");
     console.assert(formatETA(59_000) === "1m", "formatETA(59s) -> '1m'");
     console.assert(formatETA(60 * 60 * 1000) === "1h 0m", "formatETA(1h)");
-    const baseAt = (tc: number) => Math.min(99, Math.floor(tc / 7)) + 1;
+    const baseAt = (tc:number)=> Math.min(99, Math.floor(tc/7)) + 1;
     console.assert(baseAt(0) === 1, "tc0 -> level0 -> base1");
     console.assert(baseAt(6) === 1, "tc6 -> level0 -> base1");
     console.assert(baseAt(7) === 2, "tc7 -> level1 -> base2");
     console.assert(baseAt(70) === 11, "tc70 -> level10 -> base11");
-    const nextDayIdx = (tc: number) => (tc % 7) + 1;
+    const nextDayIdx = (tc:number)=> (tc % 7) + 1;
     console.assert(nextDayIdx(0) === 1 && nextDayIdx(6) === 7, "day index calc");
     console.log("✅ All tests passed");
     console.groupEnd();

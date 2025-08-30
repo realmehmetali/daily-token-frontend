@@ -52,6 +52,8 @@ export default function DailyTokenClaimOnly() {
   const { writeContractAsync } = useWriteContract();
 
   // Local UI state
+  const [isVerified, setIsVerified] = useState(false);
+
   const [streak, setStreak] = useState(0);
   const [levels, setLevels] = useState(0);
   const [lastClaimAt, setLastClaimAt] = useState<number | null>(null);
@@ -258,19 +260,21 @@ export default function DailyTokenClaimOnly() {
           </div>
 
           {/* Verify & Claim (ORB only) */}
+          {/* Step 1 — VERIFY (Connect = human check only, no tx) */}
           <div className="mt-6">
             <IDKitWidget
               app_id={APP_ID}
               action={ACTION}
-              signal={address ?? "0x0"}
+              signal={address ?? "0x0"}                // any stable string is fine here
               verification_level={VerificationLevel.Orb}
-              onSuccess={handleVerified}
+              onSuccess={() => {
+                // user proved they’re human — mark verified
+                setIsVerified(true);
+                // (we do NOT call the contract here)
+              }}
               onError={(err) => {
                 console.error("World ID error:", err);
-                const msg =
-                  typeof err === "string"
-                    ? err
-                    : (err as any)?.code || (err as any)?.message || JSON.stringify(err);
+                const msg = typeof err === "string" ? err : (err as any)?.message || JSON.stringify(err);
                 alert("World ID error: " + msg);
               }}
             >
@@ -281,25 +285,61 @@ export default function DailyTokenClaimOnly() {
                       alert("Please open in World App and connect your wallet first.");
                       return;
                     }
+                    open(); // just verify; no chain switching needed for verification
+                  }}
+                  className="w-full font-semibold py-3 rounded-2xl shadow active:translate-y-1 disabled:opacity-60"
+                  style={{ background: isVerified ? "#D1FAE5" : "#34D399", color: "#052e1a" }}
+                  disabled={claiming}
+                >
+                  {isVerified ? "Verified ✅" : "Connect (verify with World ID)"}
+                </button>
+              )}
+            </IDKitWidget>
+          </div>
+
+          {/* Step 2 — CLAIM (fresh proof → on-chain tx) */}
+          <div className="mt-3">
+            <IDKitWidget
+              app_id={APP_ID}
+              action={ACTION}
+              // If you added the helper above, prefer the daily signal:
+              // signal={claimSignal}
+              signal={address ?? "0x0"}
+              verification_level={VerificationLevel.Orb}
+              onSuccess={handleVerified}               // this calls your contract + updates UI
+              onError={(err) => {
+                console.error("World ID error:", err);
+                const msg = typeof err === "string" ? err : (err as any)?.message || JSON.stringify(err);
+                alert("World ID error: " + msg);
+              }}
+            >
+              {({ open }) => (
+                <button
+                  onClick={() => {
+                    if (!address) {
+                      alert("Please open in World App and connect your wallet first.");
+                      return;
+                    }
+                    if (!isVerified) {
+                      alert("Please verify with World ID first (Connect).");
+                      return;
+                    }
                     if (!canClaim) return;
+                    // for claim we *do* need to be on World Chain to send the tx
                     if (chainId !== WORLDCHAIN_ID) {
                       ensureWorldchain().finally(open);
                     } else {
-                      open();
+                      open(); // verify again → fresh proof → handleVerified() → wallet tx
                     }
                   }}
-                  disabled={!canClaim || !address || claiming}
+                  disabled={!isVerified || !canClaim || !address || claiming}
                   className="w-full font-semibold py-3 rounded-2xl shadow active:translate-y-1 disabled:opacity-60"
                   style={{
-                    background: canClaim && address ? theme.primary : "#D1FAE5",
-                    color: canClaim && address ? "#052e1a" : "#065F46",
+                    background: isVerified && canClaim && address ? "#34D399" : "#D1FAE5",
+                    color: isVerified && canClaim && address ? "#052e1a" : "#065F46",
                   }}
                 >
-                  {claiming
-                    ? "Claiming…"
-                    : canClaim
-                      ? "Connect (verify & claim)"
-                      : `Next claim in ${nextClaimLabel}`}
+                  {claiming ? "Claiming…" : canClaim ? "Claim with World ID" : `Next claim in ${nextClaimLabel}`}
                 </button>
               )}
             </IDKitWidget>

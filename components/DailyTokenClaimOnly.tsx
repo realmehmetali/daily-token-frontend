@@ -22,7 +22,7 @@ function burstConfetti(intense = 1) {
   const defaults = { origin: { y: 0.7 } } as const;
   try {
     confetti({ ...defaults, spread: 100, particleCount: count, scalar: 1.05 });
-  } catch { }
+  } catch {}
 }
 function playBeep() {
   const a = new Audio(
@@ -31,7 +31,7 @@ function playBeep() {
   try {
     a.currentTime = 0;
     a.play();
-  } catch { }
+  } catch {}
 }
 
 /* --------------------------- Time formatting util ------------------------- */
@@ -44,7 +44,6 @@ function formatETA(ms: number): string {
 }
 
 /* -------------------------- Daily signal helper --------------------------- */
-// Makes the claim signal unique per day so users can claim again tomorrow.
 function todayYmdUTC() {
   const d = new Date();
   const y = d.getUTCFullYear();
@@ -67,9 +66,12 @@ export default function DailyTokenClaimOnly() {
   const [lastClaimAt, setLastClaimAt] = useState<number | null>(null);
   const [tokens, setTokens] = useState(0);
 
-  const [isVerified, setIsVerified] = useState(false); // ✅ new: human verified flag
+  const [isVerified, setIsVerified] = useState(false);
   const [claiming, setClaiming] = useState(false);
   const [toast, setToast] = useState<null | { title: string; desc?: string }>(null);
+
+  // NEW: single IDKitWidget mode
+  const [mode, setMode] = useState<"verify" | "claim">("verify");
 
   const theme = {
     bg: "#F9FAFB",
@@ -93,7 +95,7 @@ export default function DailyTokenClaimOnly() {
   const now = Date.now();
   const wallet = isConnected ? address : null;
   const canClaim = useMemo(() => {
-    if (!wallet) return false;                 // must have wallet to submit tx
+    if (!wallet) return false;
     if (lastClaimAt == null) return true;
     return now - lastClaimAt >= 24 * 3600 * 1000;
   }, [wallet, lastClaimAt, now]);
@@ -166,7 +168,7 @@ export default function DailyTokenClaimOnly() {
     }
   }
 
-  // Build a per-day signal for the *claim* step (so proofs are unique per day)
+  // Per-day signal for claim step (so proofs are unique per day)
   const claimSignal = address ? `${address}:${todayYmdUTC()}` : "0x0";
 
   /* --------------------------------- Render -------------------------------- */
@@ -271,70 +273,51 @@ export default function DailyTokenClaimOnly() {
             </div>
           </div>
 
-          {/* Step 1 — VERIFY (Connect = human check only, no tx) */}
-          <div className="mt-6">
-            <IDKitWidget
-              app_id={APP_ID}
-              action={ACTION}
-              signal={address ?? "0x0"} // any stable string is fine here
-              verification_level={VerificationLevel.Orb}
-              onSuccess={() => {
-                setIsVerified(true); // mark human verified
-              }}
-              onError={(err) => {
-                console.error("World ID error:", err);
-                const msg =
-                  typeof err === "string"
-                    ? err
-                    : (err as any)?.code || (err as any)?.message || JSON.stringify(err);
-                alert("World ID error: " + msg);
-              }}
-            >
-              {({ open }) => (
+          {/* ONE IDKitWidget for both buttons */}
+          <IDKitWidget
+            app_id={APP_ID}
+            action={ACTION}
+            signal={mode === "claim" ? claimSignal : (address ?? "0x0")}
+            verification_level={VerificationLevel.Orb}
+            onSuccess={(res) => {
+              if (mode === "verify") {
+                setIsVerified(true); // human check passed
+              } else {
+                handleVerified(res as ISuccessResult); // do on-chain tx
+              }
+            }}
+            onError={(err) => {
+              console.error("World ID error:", err);
+              const msg =
+                typeof err === "string"
+                  ? err
+                  : (err as any)?.code || (err as any)?.message || JSON.stringify(err);
+              alert("World ID error: " + msg);
+            }}
+          >
+            {({ open }) => (
+              <>
+                {/* Connect = verify only (no wallet/chain required) */}
                 <button
                   onClick={() => {
-                    if (!address) {
-                      alert("Please open in World App and connect your wallet first.");
-                      return;
-                    }
-                    // No chain switching needed to just verify
-                    open(); // World ID popup → Approve/Cancel
+                    setMode("verify");
+                    open(); // always open World ID for human check
                   }}
-                  disabled={claiming}
-                  className="w-full font-semibold py-3 rounded-2xl shadow active:translate-y-1 disabled:opacity-60"
+                  className="w-full font-semibold py-3 rounded-2xl shadow active:translate-y-1 disabled:opacity-60 mt-6"
                   style={{
                     background: isVerified ? "#D1FAE5" : theme.primary,
                     color: "#052e1a",
                   }}
+                  disabled={claiming}
                 >
                   {isVerified ? "Verified ✅" : "Connect (verify with World ID)"}
                 </button>
-              )}
-            </IDKitWidget>
-          </div>
 
-          {/* Step 2 — CLAIM (fresh proof → on-chain tx) */}
-          <div className="mt-3">
-            <IDKitWidget
-              app_id={APP_ID}
-              action={ACTION}
-              signal={claimSignal} // per-day signal → repeatable daily claims
-              verification_level={VerificationLevel.Orb}
-              onSuccess={handleVerified} // verify → on-chain claim → wallet tx confirm
-              onError={(err) => {
-                console.error("World ID error:", err);
-                const msg =
-                  typeof err === "string"
-                    ? err
-                    : (err as any)?.code || (err as any)?.message || JSON.stringify(err);
-                alert("World ID error: " + msg);
-              }}
-            >
-              {({ open }) => (
+                {/* Claim = fresh proof + wallet tx */}
                 <button
                   onClick={() => {
                     if (!address) {
-                      alert("Please open in World App and connect your wallet first.");
+                      alert("Connect your wallet in World App first.");
                       return;
                     }
                     if (!isVerified) {
@@ -343,32 +326,32 @@ export default function DailyTokenClaimOnly() {
                     }
                     if (!canClaim) return;
 
-                    // For claim we *do* need to be on World Chain to send the tx
-                    if (chainId !== WORLDCHAIN_ID) {
-                      ensureWorldchain().finally(open); // switch → then open IDKit
-                    } else {
+                    const proceed = () => {
+                      setMode("claim");
                       open(); // World ID → success → handleVerified() → wallet tx
+                    };
+
+                    if (chainId !== WORLDCHAIN_ID) {
+                      ensureWorldchain().finally(proceed);
+                    } else {
+                      proceed();
                     }
                   }}
                   disabled={!isVerified || !canClaim || !address || claiming}
-                  className="w-full font-semibold py-3 rounded-2xl shadow active:translate-y-1 disabled:opacity-60"
+                  className="w-full font-semibold py-3 rounded-2xl shadow active:translate-y-1 disabled:opacity-60 mt-3"
                   style={{
                     background: isVerified && canClaim && address ? theme.primary : "#D1FAE5",
                     color: isVerified && canClaim && address ? "#052e1a" : "#065F46",
                   }}
                 >
-                  {claiming
-                    ? "Claiming…"
-                    : canClaim
-                      ? "Claim with World ID"
-                      : `Next claim in ${nextClaimLabel}`}
+                  {claiming ? "Claiming…" : canClaim ? "Claim with World ID" : `Next claim in ${nextClaimLabel}`}
                 </button>
-              )}
-            </IDKitWidget>
-          </div>
+              </>
+            )}
+          </IDKitWidget>
 
           {/* Streak pill */}
-          <div className="mt-2 flex items-center justify-between text-xs">
+          <div className="mt-4 flex items-center justify-between text-xs">
             <span
               className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border font-semibold"
               style={{ background: streakStatus.bg, color: streakStatus.color, borderColor: theme.border }}

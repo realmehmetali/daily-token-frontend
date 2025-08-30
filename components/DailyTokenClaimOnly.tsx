@@ -22,7 +22,7 @@ function burstConfetti(intense = 1) {
   const defaults = { origin: { y: 0.7 } } as const;
   try {
     confetti({ ...defaults, spread: 100, particleCount: count, scalar: 1.05 });
-  } catch {}
+  } catch { }
 }
 function playBeep() {
   const a = new Audio(
@@ -31,7 +31,7 @@ function playBeep() {
   try {
     a.currentTime = 0;
     a.play();
-  } catch {}
+  } catch { }
 }
 
 /* --------------------------- Time formatting util ------------------------- */
@@ -264,8 +264,7 @@ export default function DailyTokenClaimOnly() {
               action={ACTION}
               signal={address ?? "0x0"}
               verification_level={VerificationLevel.Orb}
-              credential_types={["orb"]}
-              onSuccess={handleVerified} // verify → on-chain claim → update UI
+              onSuccess={handleVerified}
               onError={(err) => {
                 console.error("World ID error:", err);
                 const msg =
@@ -284,10 +283,9 @@ export default function DailyTokenClaimOnly() {
                     }
                     if (!canClaim) return;
                     if (chainId !== WORLDCHAIN_ID) {
-                      // ensure chain first, then open IDKit
                       ensureWorldchain().finally(open);
                     } else {
-                      open(); // starts the World ID verification modal
+                      open();
                     }
                   }}
                   disabled={!canClaim || !address || claiming}
@@ -300,8 +298,8 @@ export default function DailyTokenClaimOnly() {
                   {claiming
                     ? "Claiming…"
                     : canClaim
-                    ? "Connect (verify & claim)"
-                    : `Next claim in ${nextClaimLabel}`}
+                      ? "Connect (verify & claim)"
+                      : `Next claim in ${nextClaimLabel}`}
                 </button>
               )}
             </IDKitWidget>
@@ -346,12 +344,12 @@ function runDevTests() {
     console.assert(formatETA(0) === "0m", "formatETA(0) should be '0m'");
     console.assert(formatETA(59_000) === "1m", "formatETA(59s) -> '1m'");
     console.assert(formatETA(60 * 60 * 1000) === "1h 0m", "formatETA(1h)");
-    const baseAt = (tc:number)=> Math.min(99, Math.floor(tc/7)) + 1;
+    const baseAt = (tc: number) => Math.min(99, Math.floor(tc / 7)) + 1;
     console.assert(baseAt(0) === 1, "tc0 -> level0 -> base1");
     console.assert(baseAt(6) === 1, "tc6 -> level0 -> base1");
     console.assert(baseAt(7) === 2, "tc7 -> level1 -> base2");
     console.assert(baseAt(70) === 11, "tc70 -> level10 -> base11");
-    const nextDayIdx = (tc:number)=> (tc % 7) + 1;
+    const nextDayIdx = (tc: number) => (tc % 7) + 1;
     console.assert(nextDayIdx(0) === 1 && nextDayIdx(6) === 7, "day index calc");
     console.log("✅ All tests passed");
     console.groupEnd();

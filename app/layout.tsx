@@ -1,14 +1,14 @@
-// frontend/app/layout.tsx
 import "./globals.css";
-import { Providers } from "./providers";
-
-export const metadata = { title: "Daily Token" };
+import Providers from "./providers";
+import MiniKitProvider from "./minikit-provider";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body>
-        <Providers>{children}</Providers>
+        <Providers>
+          <MiniKitProvider>{children}</MiniKitProvider>
+        </Providers>
       </body>
     </html>
   );

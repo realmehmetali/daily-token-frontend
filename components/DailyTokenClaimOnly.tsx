@@ -4,7 +4,7 @@ import React, { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
 import { Sparkles, RefreshCw, Trophy, CircleDollarSign } from "lucide-react";
-import { IDKitWidget, type ISuccessResult, VerificationLevel } from "@worldcoin/idkit";
+import { MiniKit } from "@worldcoin/minikit-js";
 import { useAccount, useChainId, useSwitchChain, useWriteContract } from "wagmi";
 import hubAbi from "@/abis/DailyClaimHub.json";
 import { HUB, APP_ID, ACTION, CHAIN_ID as WORLDCHAIN_ID } from "@/lib/env";
@@ -12,8 +12,8 @@ import { HUB, APP_ID, ACTION, CHAIN_ID as WORLDCHAIN_ID } from "@/lib/env";
 /* ----------------------------- Reward schedule ---------------------------- */
 function baseRateByStreak(streakDays: number): number {
   if (streakDays <= 0) return 0;
-  const level = Math.min(100 - 1, Math.floor((streakDays - 1) / 7)); // 0..99
-  return level + 1; // 1..100
+  const level = Math.min(100 - 1, Math.floor((streakDays - 1) / 7));
+  return level + 1;
 }
 
 /* ------------------------------- FX helpers ------------------------------- */
@@ -54,7 +54,7 @@ function todayYmdUTC() {
 
 /* --------------------------------- App ----------------------------------- */
 export default function DailyTokenClaimOnly() {
-  // Wallet info from World App (wagmi)
+  // Wallet info
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
@@ -69,9 +69,6 @@ export default function DailyTokenClaimOnly() {
   const [isVerified, setIsVerified] = useState(false);
   const [claiming, setClaiming] = useState(false);
   const [toast, setToast] = useState<null | { title: string; desc?: string }>(null);
-
-  // NEW: single IDKitWidget mode
-  const [mode, setMode] = useState<"verify" | "claim">("verify");
 
   const theme = {
     bg: "#F9FAFB",
@@ -108,11 +105,11 @@ export default function DailyTokenClaimOnly() {
 
   /* ---------------- Base/day and weekly progress (DISPLAY LOGIC) ----------- */
   const dayRate = useMemo(() => baseRateByStreak(streak + 1), [streak]);
-  const completedInWeek = useMemo(() => streak % 7, [streak]); // 0..6
+  const completedInWeek = useMemo(() => streak % 7, [streak]);
   const progressPct = useMemo(() => (completedInWeek / 7) * 100, [completedInWeek]);
   const ringProgress = completedInWeek / 7;
 
-  const nextDayInWeek = useMemo(() => (streak % 7) + 1, [streak]); // 1..7
+  const nextDayInWeek = useMemo(() => (streak % 7) + 1, [streak]);
   const isSeventhNext = nextDayInWeek === 7;
   const projectedPayout = dayRate * (isSeventhNext ? 3 : 1);
 
@@ -127,8 +124,8 @@ export default function DailyTokenClaimOnly() {
     }
   }
 
-  // World ID → on-chain claimVerified → update local UI (for visuals)
-  async function handleVerified(res: ISuccessResult) {
+  // On-chain claim after a successful proof
+  async function handleVerified(res: any) {
     try {
       setClaiming(true);
 
@@ -168,8 +165,79 @@ export default function DailyTokenClaimOnly() {
     }
   }
 
-  // Per-day signal for claim step (so proofs are unique per day)
-  const claimSignal = address ? `${address}:${todayYmdUTC()}` : "0x0";
+  // Verify (Connect) inside mini app
+  async function verifyHuman() {
+    try {
+      if (!address) {
+        alert("Open in World App and connect your wallet first.");
+        return;
+      }
+      if (!MiniKit.isInstalled()) {
+        alert("Please open this Mini App inside World App to verify.");
+        return;
+      }
+      // Optional but nice to ensure MiniKit is ready
+      MiniKit.install();
+
+      const { finalPayload } = await MiniKit.commandsAsync.verify({
+        app_id: APP_ID,
+        action: ACTION,
+        signal: address, // stable per-user for Connect step
+        verification_level: "orb",
+      } as any);
+
+      if (finalPayload?.status === "success") {
+        setIsVerified(true);
+      } else {
+        alert("Verification was not completed.");
+      }
+    } catch (e: any) {
+      console.error("MiniKit verify error:", e);
+      alert("World ID verify error: " + (e?.message || String(e)));
+    }
+  }
+
+  // Claim flow (fresh daily proof + on-chain tx)
+  async function claimWithWorldID() {
+    try {
+      if (!address) {
+        alert("Open in World App and connect your wallet first.");
+        return;
+      }
+      if (!isVerified) {
+        alert("Please verify with World ID first (Connect).");
+        return;
+      }
+      if (!canClaim) return;
+
+      if (!MiniKit.isInstalled()) {
+        alert("Please open this Mini App inside World App to claim.");
+        return;
+      }
+      MiniKit.install();
+
+      const dailySignal = `${address}:${todayYmdUTC()}`;
+
+      const { finalPayload } = await MiniKit.commandsAsync.verify({
+        app_id: APP_ID,
+        action: ACTION,
+        signal: dailySignal, // unique per day
+        verification_level: "orb",
+      } as any);
+
+      if (finalPayload?.status === "success") {
+        // finalPayload carries the proof fields
+        await handleVerified(finalPayload);
+      } else {
+        alert("Claim verification was not completed.");
+      }
+    } catch (e: any) {
+      console.error("MiniKit claim verify error:", e);
+      alert("World ID claim error: " + (e?.message || String(e)));
+    }
+  }
+
+  const claimDisabled = !isVerified || !canClaim || !address || claiming;
 
   /* --------------------------------- Render -------------------------------- */
   return (
@@ -193,7 +261,7 @@ export default function DailyTokenClaimOnly() {
               <Sparkles className="h-5 w-5" style={{ color: theme.primary }} />
             </motion.div>
 
-            {/* Level with trophy + progress ring (completed days) */}
+            {/* Level with trophy + progress ring */}
             <div className="ml-2 flex items-center gap-2">
               <div className="relative">
                 <svg width="28" height="28" viewBox="0 0 36 36" className="-rotate-90">
@@ -250,14 +318,13 @@ export default function DailyTokenClaimOnly() {
 
       {/* Main */}
       <main className="mx-auto max-w-5xl px-4 py-6 space-y-6">
-        {/* Claim card */}
         <section className="rounded-3xl border p-5" style={{ background: "#FFFFFF", borderColor: theme.border }}>
           <div className="text-lg font-semibold">Today’s Reward</div>
           <div className="text-4xl font-extrabold mt-2" style={{ color: theme.primary }}>
             +{projectedPayout} TOK
           </div>
 
-          {/* Progress bar (completed days) */}
+          {/* Progress bar */}
           <div className="mt-4">
             <div className="flex items-center justify-between text-xs mb-1">
               <div>
@@ -273,82 +340,35 @@ export default function DailyTokenClaimOnly() {
             </div>
           </div>
 
-          {/* ONE IDKitWidget for both buttons */}
-          <IDKitWidget
-            app_id={APP_ID}
-            action={ACTION}
-            signal={mode === "claim" ? claimSignal : (address ?? "0x0")}
-            verification_level={VerificationLevel.Orb}
-            onSuccess={(res) => {
-              if (mode === "verify") {
-                setIsVerified(true); // human check passed
-              } else {
-                handleVerified(res as ISuccessResult); // do on-chain tx
-              }
-            }}
-            onError={(err) => {
-              console.error("World ID error:", err);
-              const msg =
-                typeof err === "string"
-                  ? err
-                  : (err as any)?.code || (err as any)?.message || JSON.stringify(err);
-              alert("World ID error: " + msg);
-            }}
-          >
-            {({ open }) => (
-              <>
-                {/* Connect = verify only (no wallet/chain required) */}
-                <button
-                  onClick={() => {
-                    setMode("verify");
-                    open(); // always open World ID for human check
-                  }}
-                  className="w-full font-semibold py-3 rounded-2xl shadow active:translate-y-1 disabled:opacity-60 mt-6"
-                  style={{
-                    background: isVerified ? "#D1FAE5" : theme.primary,
-                    color: "#052e1a",
-                  }}
-                  disabled={claiming}
-                >
-                  {isVerified ? "Verified ✅" : "Connect (verify with World ID)"}
-                </button>
+          {/* Step 1 — VERIFY (Connect = human check only, no tx) */}
+          <div className="mt-6">
+            <button
+              onClick={verifyHuman}
+              disabled={claiming}
+              className="w-full font-semibold py-3 rounded-2xl shadow active:translate-y-1 disabled:opacity-60"
+              style={{
+                background: isVerified ? "#D1FAE5" : theme.primary,
+                color: "#052e1a",
+              }}
+            >
+              {isVerified ? "Verified ✅" : "Connect (verify with World ID)"}
+            </button>
+          </div>
 
-                {/* Claim = fresh proof + wallet tx */}
-                <button
-                  onClick={() => {
-                    if (!address) {
-                      alert("Connect your wallet in World App first.");
-                      return;
-                    }
-                    if (!isVerified) {
-                      alert("Please verify with World ID first (Connect).");
-                      return;
-                    }
-                    if (!canClaim) return;
-
-                    const proceed = () => {
-                      setMode("claim");
-                      open(); // World ID → success → handleVerified() → wallet tx
-                    };
-
-                    if (chainId !== WORLDCHAIN_ID) {
-                      ensureWorldchain().finally(proceed);
-                    } else {
-                      proceed();
-                    }
-                  }}
-                  disabled={!isVerified || !canClaim || !address || claiming}
-                  className="w-full font-semibold py-3 rounded-2xl shadow active:translate-y-1 disabled:opacity-60 mt-3"
-                  style={{
-                    background: isVerified && canClaim && address ? theme.primary : "#D1FAE5",
-                    color: isVerified && canClaim && address ? "#052e1a" : "#065F46",
-                  }}
-                >
-                  {claiming ? "Claiming…" : canClaim ? "Claim with World ID" : `Next claim in ${nextClaimLabel}`}
-                </button>
-              </>
-            )}
-          </IDKitWidget>
+          {/* Step 2 — CLAIM (fresh proof → on-chain tx) */}
+          <div className="mt-3">
+            <button
+              onClick={claimWithWorldID}
+              disabled={claimDisabled}
+              className="w-full font-semibold py-3 rounded-2xl shadow active:translate-y-1 disabled:opacity-60"
+              style={{
+                background: !claimDisabled ? theme.primary : "#D1FAE5",
+                color: !claimDisabled ? "#052e1a" : "#065F46",
+              }}
+            >
+              {claiming ? "Claiming…" : canClaim ? "Claim with World ID" : `Next claim in ${nextClaimLabel}`}
+            </button>
+          </div>
 
           {/* Streak pill */}
           <div className="mt-4 flex items-center justify-between text-xs">

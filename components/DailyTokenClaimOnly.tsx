@@ -4,7 +4,7 @@ import React, { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
 import { Sparkles, RefreshCw, Trophy, CircleDollarSign } from "lucide-react";
-import { IDKitWidget, ISuccessResult, VerificationLevel } from "@worldcoin/idkit";
+import { IDKitWidget, type ISuccessResult, VerificationLevel } from "@worldcoin/idkit";
 import { useAccount, useChainId, useSwitchChain, useWriteContract } from "wagmi";
 import hubAbi from "@/abis/DailyClaimHub.json";
 import { HUB, APP_ID, ACTION, CHAIN_ID as WORLDCHAIN_ID } from "@/lib/env";
@@ -45,13 +45,13 @@ function formatETA(ms: number): string {
 
 /* --------------------------------- App ----------------------------------- */
 export default function DailyTokenClaimOnly() {
-  // Use wallet info from World App (wagmi)
+  // Wallet info from World App (wagmi)
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
   const { writeContractAsync } = useWriteContract();
 
-  // Keep your local preview state for visuals
+  // Local UI state
   const [streak, setStreak] = useState(0);
   const [levels, setLevels] = useState(0);
   const [lastClaimAt, setLastClaimAt] = useState<number | null>(null);
@@ -82,7 +82,7 @@ export default function DailyTokenClaimOnly() {
   const now = Date.now();
   const wallet = isConnected ? address : null;
   const canClaim = useMemo(() => {
-    if (!wallet) return false;
+    if (!wallet) return false;                 // must have wallet to submit tx
     if (lastClaimAt == null) return true;
     return now - lastClaimAt >= 24 * 3600 * 1000;
   }, [wallet, lastClaimAt, now]);
@@ -257,14 +257,15 @@ export default function DailyTokenClaimOnly() {
             </div>
           </div>
 
-          {/* Verified-only claim */}
+          {/* Verify & Claim (ORB only) */}
           <div className="mt-6">
             <IDKitWidget
               app_id={APP_ID}
               action={ACTION}
               signal={address ?? "0x0"}
               verification_level={VerificationLevel.Orb}
-              onSuccess={handleVerified}
+              credential_types={["orb"]}
+              onSuccess={handleVerified} // verify → on-chain claim → update UI
               onError={(err) => {
                 console.error("World ID error:", err);
                 const msg =
@@ -277,9 +278,17 @@ export default function DailyTokenClaimOnly() {
               {({ open }) => (
                 <button
                   onClick={() => {
+                    if (!address) {
+                      alert("Please open in World App and connect your wallet first.");
+                      return;
+                    }
+                    if (!canClaim) return;
                     if (chainId !== WORLDCHAIN_ID) {
+                      // ensure chain first, then open IDKit
                       ensureWorldchain().finally(open);
-                    } else open();
+                    } else {
+                      open(); // starts the World ID verification modal
+                    }
                   }}
                   disabled={!canClaim || !address || claiming}
                   className="w-full font-semibold py-3 rounded-2xl shadow active:translate-y-1 disabled:opacity-60"
@@ -288,7 +297,11 @@ export default function DailyTokenClaimOnly() {
                     color: canClaim && address ? "#052e1a" : "#065F46",
                   }}
                 >
-                  {claiming ? "Claiming…" : canClaim ? "Claim with World ID" : `Next claim in ${nextClaimLabel}`}
+                  {claiming
+                    ? "Claiming…"
+                    : canClaim
+                    ? "Connect (verify & claim)"
+                    : `Next claim in ${nextClaimLabel}`}
                 </button>
               )}
             </IDKitWidget>

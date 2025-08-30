@@ -1,5 +1,6 @@
 // frontend/app/layout.tsx
-import Providers from "./providers";
+import "./globals.css";
+import { Providers } from "./providers";
 
 export const metadata = { title: "Daily Token" };
 

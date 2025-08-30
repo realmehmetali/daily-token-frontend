@@ -1,7 +1,5 @@
-"use client";
-
+// frontend/lib/wagmi.ts
 import { http, createConfig } from "wagmi";
-import { injected } from "wagmi/connectors";
 import { defineChain } from "viem";
 
 export const worldchain = defineChain({
@@ -17,15 +15,9 @@ export const worldchain = defineChain({
   },
 });
 
-export const config = createConfig({
+export const wagmiConfig = createConfig({
   chains: [worldchain],
-  transports: { [worldchain.id]: http(worldchain.rpcUrls.default.http[0]) },
-  connectors: [
-    injected({
-      shimDisconnect: true,         // smoother UX in webviews
-      target: "metaMask",           // still works for World App’s injected provider
-    }),
-  ],
-  ssr: true,
-  autoConnect: true,                // <— important
+  transports: {
+    [worldchain.id]: http(worldchain.rpcUrls.default.http[0]),
+  },
 });

@@ -7,21 +7,26 @@ import { Sparkles, RefreshCw, Trophy, CircleDollarSign } from "lucide-react";
 import { MiniKit } from "@worldcoin/minikit-js";
 import { useAccount, useChainId, useSwitchChain, useWriteContract } from "wagmi";
 import hubAbi from "@/abis/DailyClaimHub.json";
-import { HUB, APP_ID, ACTION, CHAIN_ID as WORLDCHAIN_ID } from "@/lib/env";
+import {
+  HUB,
+  APP_ID,
+  ACTION_VERIFY,
+  ACTION_CLAIM,
+  CHAIN_ID as WORLDCHAIN_ID,
+} from "@/lib/env";
 
 /* ----------------------------- Reward schedule ---------------------------- */
 function baseRateByStreak(streakDays: number): number {
   if (streakDays <= 0) return 0;
-  const level = Math.min(100 - 1, Math.floor((streakDays - 1) / 7));
-  return level + 1;
+  const level = Math.min(100 - 1, Math.floor((streakDays - 1) / 7)); // 0..99
+  return level + 1; // 1..100
 }
 
 /* ------------------------------- FX helpers ------------------------------- */
 function burstConfetti(intense = 1) {
   const count = Math.floor(200 * intense);
-  const defaults = { origin: { y: 0.7 } } as const;
   try {
-    confetti({ ...defaults, spread: 100, particleCount: count, scalar: 1.05 });
+    confetti({ origin: { y: 0.7 }, spread: 100, particleCount: count, scalar: 1.05 });
   } catch {}
 }
 function playBeep() {
@@ -54,7 +59,7 @@ function todayYmdUTC() {
 
 /* --------------------------------- App ----------------------------------- */
 export default function DailyTokenClaimOnly() {
-  // Wallet info
+  // Wallet info from World App (wagmi)
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
@@ -105,11 +110,11 @@ export default function DailyTokenClaimOnly() {
 
   /* ---------------- Base/day and weekly progress (DISPLAY LOGIC) ----------- */
   const dayRate = useMemo(() => baseRateByStreak(streak + 1), [streak]);
-  const completedInWeek = useMemo(() => streak % 7, [streak]);
+  const completedInWeek = useMemo(() => streak % 7, [streak]); // 0..6
   const progressPct = useMemo(() => (completedInWeek / 7) * 100, [completedInWeek]);
   const ringProgress = completedInWeek / 7;
 
-  const nextDayInWeek = useMemo(() => (streak % 7) + 1, [streak]);
+  const nextDayInWeek = useMemo(() => (streak % 7) + 1, [streak]); // 1..7
   const isSeventhNext = nextDayInWeek === 7;
   const projectedPayout = dayRate * (isSeventhNext ? 3 : 1);
 
@@ -117,18 +122,16 @@ export default function DailyTokenClaimOnly() {
     if (chainId !== WORLDCHAIN_ID && switchChainAsync) {
       try {
         await switchChainAsync({ chainId: WORLDCHAIN_ID });
-      } catch (e) {
-        console.error(e);
+      } catch {
         alert("Please switch to World Chain (ID 480) in your wallet.");
       }
     }
   }
 
-  // On-chain claim after a successful proof
+  // On-chain claim after verify proof for claim action
   async function handleVerified(res: any) {
     try {
       setClaiming(true);
-
       if (chainId !== WORLDCHAIN_ID) await ensureWorldchain();
 
       await writeContractAsync({
@@ -165,79 +168,54 @@ export default function DailyTokenClaimOnly() {
     }
   }
 
-  // Verify (Connect) inside mini app
+  /* ------------------------- MiniKit actions (two) ------------------------- */
   async function verifyHuman() {
+    if (!address) return alert("Open in World App and connect your wallet first.");
+    if (!MiniKit?.isInstalled?.()) return alert("Open this inside World App.");
     try {
-      if (!address) {
-        alert("Open in World App and connect your wallet first.");
-        return;
-      }
-      if (!MiniKit.isInstalled()) {
-        alert("Please open this Mini App inside World App to verify.");
-        return;
-      }
-      // Optional but nice to ensure MiniKit is ready
-      MiniKit.install();
-
-      const { finalPayload } = await MiniKit.commandsAsync.verify({
+      const res = await MiniKit.commands.verify({
         app_id: APP_ID,
-        action: ACTION,
-        signal: address, // stable per-user for Connect step
+        action: ACTION_VERIFY,                       // one-time action
+        signal: address as `0x${string}`,            // stable per user
         verification_level: "orb",
       } as any);
-
-      if (finalPayload?.status === "success") {
+      const payload = (res as any)?.finalPayload;
+      if (payload?.status === "success") {
         setIsVerified(true);
       } else {
-        alert("Verification was not completed.");
+        alert("Verification not completed.");
       }
     } catch (e: any) {
-      console.error("MiniKit verify error:", e);
-      alert("World ID verify error: " + (e?.message || String(e)));
+      console.error("Verify error", e);
+      alert(e?.message || "Verify failed");
     }
   }
 
-  // Claim flow (fresh daily proof + on-chain tx)
-  async function claimWithWorldID() {
+  async function claimFlow() {
+    if (!address) return alert("Open in World App and connect your wallet first.");
+    if (!isVerified) return alert("Please verify first (Connect).");
+    if (!canClaim) return;
+    if (!MiniKit?.isInstalled?.()) return alert("Open this inside World App.");
+
+    const dailySignal = `${address}:${todayYmdUTC()}`;
     try {
-      if (!address) {
-        alert("Open in World App and connect your wallet first.");
-        return;
-      }
-      if (!isVerified) {
-        alert("Please verify with World ID first (Connect).");
-        return;
-      }
-      if (!canClaim) return;
-
-      if (!MiniKit.isInstalled()) {
-        alert("Please open this Mini App inside World App to claim.");
-        return;
-      }
-      MiniKit.install();
-
-      const dailySignal = `${address}:${todayYmdUTC()}`;
-
-      const { finalPayload } = await MiniKit.commandsAsync.verify({
+      const res = await MiniKit.commands.verify({
         app_id: APP_ID,
-        action: ACTION,
-        signal: dailySignal, // unique per day
+        action: ACTION_CLAIM,                        // repeatable daily action
+        signal: dailySignal,                         // per-day unique
         verification_level: "orb",
       } as any);
-
-      if (finalPayload?.status === "success") {
-        // finalPayload carries the proof fields
-        await handleVerified(finalPayload);
+      const payload = (res as any)?.finalPayload;
+      if (payload?.status === "success") {
+        await handleVerified(payload);              // on-chain tx
       } else {
-        alert("Claim verification was not completed.");
+        alert("Claim verification not completed.");
       }
     } catch (e: any) {
-      console.error("MiniKit claim verify error:", e);
-      alert("World ID claim error: " + (e?.message || String(e)));
+      console.error("Claim error", e);
+      alert(e?.message || "Claim failed");
     }
   }
-
-  const claimDisabled = !isVerified || !canClaim || !address || claiming;
 
   /* --------------------------------- Render -------------------------------- */
   return (
@@ -324,7 +302,7 @@ export default function DailyTokenClaimOnly() {
             +{projectedPayout} TOK
           </div>
 
-          {/* Progress bar */}
+          {/* Progress */}
           <div className="mt-4">
             <div className="flex items-center justify-between text-xs mb-1">
               <div>
@@ -340,38 +318,43 @@ export default function DailyTokenClaimOnly() {
             </div>
           </div>
 
-          {/* Step 1 — VERIFY (Connect = human check only, no tx) */}
-          <div className="mt-6">
+          {/* MiniKit bridge status */}
+          <div className="mt-2 text-xs">
+            <span className="inline-flex items-center gap-2 px-2 py-1 rounded-lg border" style={{ borderColor: theme.border, background: "#fff" }}>
+              <span className="inline-block w-2 h-2 rounded-full" style={{ background: MiniKit?.isInstalled?.() ? "#16a34a" : "#ef4444" }} />
+              {MiniKit?.isInstalled?.() ? "MiniKit detected" : "Open in World App"}
+            </span>
+          </div>
+
+          {/* Buttons */}
+          <div className="mt-6 space-y-3">
             <button
               onClick={verifyHuman}
-              disabled={claiming}
               className="w-full font-semibold py-3 rounded-2xl shadow active:translate-y-1 disabled:opacity-60"
-              style={{
-                background: isVerified ? "#D1FAE5" : theme.primary,
-                color: "#052e1a",
-              }}
+              style={{ background: isVerified ? "#D1FAE5" : theme.primary, color: "#052e1a" }}
+              disabled={claiming}
             >
               {isVerified ? "Verified ✅" : "Connect (verify with World ID)"}
             </button>
-          </div>
 
-          {/* Step 2 — CLAIM (fresh proof → on-chain tx) */}
-          <div className="mt-3">
             <button
-              onClick={claimWithWorldID}
-              disabled={claimDisabled}
+              onClick={async () => {
+                if (chainId !== WORLDCHAIN_ID) await ensureWorldchain();
+                await claimFlow();
+              }}
               className="w-full font-semibold py-3 rounded-2xl shadow active:translate-y-1 disabled:opacity-60"
               style={{
-                background: !claimDisabled ? theme.primary : "#D1FAE5",
-                color: !claimDisabled ? "#052e1a" : "#065F46",
+                background: isVerified && canClaim && address ? theme.primary : "#D1FAE5",
+                color: isVerified && canClaim && address ? "#052e1a" : "#065F46",
               }}
+              disabled={!isVerified || !canClaim || !address || claiming}
             >
               {claiming ? "Claiming…" : canClaim ? "Claim with World ID" : `Next claim in ${nextClaimLabel}`}
             </button>
           </div>
 
           {/* Streak pill */}
-          <div className="mt-4 flex items-center justify-between text-xs">
+          <div className="mt-2 flex items-center justify-between text-xs">
             <span
               className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border font-semibold"
               style={{ background: streakStatus.bg, color: streakStatus.color, borderColor: theme.border }}
@@ -401,25 +384,3 @@ export default function DailyTokenClaimOnly() {
     </div>
   );
 }
-
-/* ------------------------------ Dev Smoke Tests --------------------------- */
-function runDevTests() {
-  try {
-    console.group("DailyTokenClaimOnly — tests");
-    console.assert(formatETA(0) === "0m", "formatETA(0) should be '0m'");
-    console.assert(formatETA(59_000) === "1m", "formatETA(59s) -> '1m'");
-    console.assert(formatETA(60 * 60 * 1000) === "1h 0m", "formatETA(1h)");
-    const baseAt = (tc: number) => Math.min(99, Math.floor(tc / 7)) + 1;
-    console.assert(baseAt(0) === 1, "tc0 -> level0 -> base1");
-    console.assert(baseAt(6) === 1, "tc6 -> level0 -> base1");
-    console.assert(baseAt(7) === 2, "tc7 -> level1 -> base2");
-    console.assert(baseAt(70) === 11, "tc70 -> level10 -> base11");
-    const nextDayIdx = (tc: number) => (tc % 7) + 1;
-    console.assert(nextDayIdx(0) === 1 && nextDayIdx(6) === 7, "day index calc");
-    console.log("✅ All tests passed");
-    console.groupEnd();
-  } catch (e) {
-    console.error("❌ Tests failed", e);
-  }
-}
-if (typeof window !== "undefined") setTimeout(runDevTests, 0);

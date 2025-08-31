@@ -1,1 +1,1 @@
-{"/_not-found/page":"/_not-found","/test/page":"/test","/verify/route":"/verify","/api/nonce/route":"/api/nonce","/api/complete-siwe/route":"/api/complete-siwe","/api/env/route":"/api/env","/page":"/"}
+{"/_not-found/page":"/_not-found","/page":"/","/test/page":"/test","/api/env/route":"/api/env","/api/nonce/route":"/api/nonce","/verify/route":"/verify","/api/complete-siwe/route":"/api/complete-siwe"}

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
 import { Sparkles, RefreshCw, Trophy, CircleDollarSign } from "lucide-react";
@@ -11,7 +11,7 @@ import { useAccount, useChainId, useSwitchChain, useWriteContract } from "wagmi"
 import hubAbi from "@/abis/DailyClaimHub.json";
 import {
   HUB,
-  APP_ID, // not used here directly but keep import if you log/debug
+  APP_ID, // used by IDKit + backend verify route
   CHAIN_ID as WORLDCHAIN_ID,
   ACTION_CLAIM,
 } from "@/lib/env";
@@ -66,13 +66,28 @@ export default function DailyTokenClaimOnly() {
   const { switchChainAsync } = useSwitchChain();
   const { writeContractAsync } = useWriteContract();
 
+  // MiniKit presence info (helps debug "button not opening" in World App)
+  const [mkInstalled, setMkInstalled] = useState<boolean | null>(null);
+  const [mkAddr, setMkAddr] = useState<string | null>(null);
+  const [mkUser, setMkUser] = useState<string | null>(null);
+
+  useEffect(() => {
+    const mk: any = (window as any).MiniKit;
+    const installed = mk?.isInstalled?.() ?? false;
+    setMkInstalled(installed);
+    setMkAddr(mk?.walletAddress ?? null);
+    setMkUser(mk?.user?.username ?? null);
+    console.log("MiniKit installed?", installed);
+    console.log("MiniKit object:", mk);
+  }, []);
+
   // Local UI state
   const [streak, setStreak] = useState(0);
   const [levels, setLevels] = useState(0);
   const [lastClaimAt, setLastClaimAt] = useState<number | null>(null);
   const [tokens, setTokens] = useState(0);
 
-  const [isVerified, setIsVerified] = useState(false); // we'll set this after Wallet Auth success
+  const [isVerified, setIsVerified] = useState(false); // set after Wallet Auth success
   const [claiming, setClaiming] = useState(false);
   const [toast, setToast] = useState<null | { title: string; desc?: string }>(null);
 
@@ -163,7 +178,7 @@ export default function DailyTokenClaimOnly() {
 
       if (json.status === "success" && json.isValid) {
         setIsVerified(true);
-        // Optional: you can also read MiniKit.walletAddress here
+        // Optional: MiniKit.walletAddress / MiniKit.user.username are also available
       } else {
         alert("Sign-in failed. Please try again.");
       }
@@ -293,6 +308,31 @@ export default function DailyTokenClaimOnly() {
           </div>
         </div>
       </header>
+
+      {/* MiniKit status banner (debug) */}
+      {mkInstalled !== null && (
+        <div className="mx-auto max-w-5xl px-4">
+          <div
+            className="mt-3 mb-1 rounded-xl border px-3 py-2 text-xs"
+            style={{ background: "#FFF", borderColor: "#E5E7EB" }}
+          >
+            <b>MiniKit:</b>{" "}
+            {mkInstalled ? "installed ✅ (World App webview)" : "not installed ❌ (regular browser)"}
+            {mkUser ? (
+              <>
+                {" "}
+                · user <b>@{mkUser}</b>
+              </>
+            ) : null}
+            {mkAddr ? (
+              <>
+                {" "}
+                · addr <b>{mkAddr.slice(0, 6)}…{mkAddr.slice(-4)}</b>
+              </>
+            ) : null}
+          </div>
+        </div>
+      )}
 
       {/* Main */}
       <main className="mx-auto max-w-5xl px-4 py-6 space-y-6">

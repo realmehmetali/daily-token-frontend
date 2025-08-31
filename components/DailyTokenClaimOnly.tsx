@@ -5,22 +5,22 @@ import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
 import { Sparkles, RefreshCw, Trophy, CircleDollarSign } from "lucide-react";
 import { IDKitWidget, type ISuccessResult, VerificationLevel } from "@worldcoin/idkit";
-import { MiniKit, VerificationLevel as MiniVerificationLevel } from "@worldcoin/minikit-js";
-import { useAccount, useChainId, useWriteContract } from "wagmi";
+import { MiniKit } from "@worldcoin/minikit-js";
+
+import { useAccount, useChainId, useSwitchChain, useWriteContract } from "wagmi";
 import hubAbi from "@/abis/DailyClaimHub.json";
 import {
   HUB,
-  APP_ID,                    // app_staging_...
-  CHAIN_ID as WORLDCHAIN_ID,   // 480
-  ACTION_VERIFY,               // "connect"
-  ACTION_CLAIM,                // "claim"
+  APP_ID, // not used here directly but keep import if you log/debug
+  CHAIN_ID as WORLDCHAIN_ID,
+  ACTION_CLAIM,
 } from "@/lib/env";
 
 /* ----------------------------- Reward schedule ---------------------------- */
 function baseRateByStreak(streakDays: number): number {
   if (streakDays <= 0) return 0;
-  const level = Math.min(100 - 1, Math.floor((streakDays - 1) / 7));
-  return level + 1;
+  const level = Math.min(100 - 1, Math.floor((streakDays - 1) / 7)); // 0..99
+  return level + 1; // 1..100
 }
 
 /* ------------------------------- FX helpers ------------------------------- */
@@ -59,21 +59,11 @@ function todayYmdUTC() {
   return `${y}-${m}-${day}`;
 }
 
-/* ----------------------------- Mini detection ----------------------------- */
-function isMiniApp() {
-  if (typeof window === "undefined") return false;
-  // MiniKit.isInstalled() is the official check per docs.
-  try {
-    return MiniKit.isInstalled();
-  } catch {
-    return false;
-  }
-}
-
 /* --------------------------------- App ----------------------------------- */
 export default function DailyTokenClaimOnly() {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
+  const { switchChainAsync } = useSwitchChain();
   const { writeContractAsync } = useWriteContract();
 
   // Local UI state
@@ -82,7 +72,7 @@ export default function DailyTokenClaimOnly() {
   const [lastClaimAt, setLastClaimAt] = useState<number | null>(null);
   const [tokens, setTokens] = useState(0);
 
-  const [isVerified, setIsVerified] = useState(false);
+  const [isVerified, setIsVerified] = useState(false); // we'll set this after Wallet Auth success
   const [claiming, setClaiming] = useState(false);
   const [toast, setToast] = useState<null | { title: string; desc?: string }>(null);
 
@@ -119,7 +109,7 @@ export default function DailyTokenClaimOnly() {
   }, [canClaim, lastClaimAt, now]);
   const nextClaimLabel = useMemo(() => formatETA(nextClaimInMs), [nextClaimInMs]);
 
-  /* ---------------- Progress visuals -------------------------------------- */
+  /* ---------------- Base/day and weekly progress (DISPLAY LOGIC) ----------- */
   const dayRate = useMemo(() => baseRateByStreak(streak + 1), [streak]);
   const completedInWeek = useMemo(() => streak % 7, [streak]); // 0..6
   const progressPct = useMemo(() => (completedInWeek / 7) * 100, [completedInWeek]);
@@ -129,113 +119,61 @@ export default function DailyTokenClaimOnly() {
   const isSeventhNext = nextDayInWeek === 7;
   const projectedPayout = dayRate * (isSeventhNext ? 3 : 1);
 
-  // Per-day signal for claim step
-  const claimSignal = address ? `${address}:${todayYmdUTC()}` : "0x0";
-
-  /* -------------------------- Chain switch helper -------------------------- */
   async function ensureWorldchain() {
-    // Use provider directly (don’t pass storage/functions across server boundaries)
-    if (typeof window === "undefined") return;
-    if (chainId === WORLDCHAIN_ID) return;
+    if (chainId !== WORLDCHAIN_ID && switchChainAsync) {
+      try {
+        await switchChainAsync({ chainId: WORLDCHAIN_ID });
+      } catch (e) {
+        console.error(e);
+        alert("Please switch to World Chain (ID 480) in your wallet.");
+      }
+    }
+  }
+
+  /* ---------------------------- Wallet Auth (SIWE) ------------------------- */
+  async function handleWalletAuth() {
     try {
-      await (window as any)?.ethereum?.request?.({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: "0x1e0" }], // 480
+      if (!MiniKit.isInstalled()) {
+        alert("Open this site inside World App to sign in.");
+        return;
+      }
+
+      // 1) get a server-side nonce (stored in an httpOnly cookie)
+      const res = await fetch("/api/nonce", { cache: "no-store" });
+      const { nonce } = await res.json();
+
+      // 2) open World App "Sign In" drawer
+      const { finalPayload } = await MiniKit.commandsAsync.walletAuth({
+        nonce,
+        statement: "Sign in to Daily Token",
       });
-    } catch (e) {
-      console.warn("wallet_switchEthereumChain failed or unsupported", e);
-      alert("Please switch to World Chain (ID 480) in your wallet.");
-    }
-  }
 
-  /* ---------------------------- VERIFY handler ----------------------------- */
-  async function handleVerifyClick(openIdKit?: () => void) {
-    if (isMiniApp()) {
-      try {
-        const { finalPayload } = await MiniKit.commandsAsync.verify({
-          action: ACTION_VERIFY,
-          signal: "connect-check",
-          verification_level: MiniVerificationLevel.Orb,
-        });
-
-        if ((finalPayload as any)?.status === "error") {
-          console.error("MiniKit verify error payload:", finalPayload);
-          alert("Verification failed.");
-          return;
-        }
-
-        // Verify proof on backend per docs
-        const resp = await fetch("/api/verify", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            payload: finalPayload,
-            action: ACTION_VERIFY,
-            signal: "connect-check",
-          }),
-        });
-        const data = await resp.json();
-
-        if (data.status === 200) {
-          setIsVerified(true);
-        } else {
-          alert("Verify backend rejected proof.");
-        }
-      } catch (err) {
-        console.error("MiniKit verify exception:", err);
-        alert("World ID verify error: " + ((err as any)?.message ?? String(err)));
+      if (finalPayload.status === "error") {
+        console.error("WalletAuth error:", finalPayload);
+        return;
       }
-    } else if (openIdKit) {
-      openIdKit(); // web fallback
-    } else {
-      alert("Open in World App to verify, or use the web version.");
-    }
-  }
 
-  /* ----------------------------- CLAIM handler ----------------------------- */
-  // Mini App path: get fresh proof via MiniKit -> send tx with wagmi (your contract verifies)
-  // Web path: open IDKit, then handleVerified runs.
-  async function handleClaimClick(openIdKit?: () => void) {
-    if (!isVerified) {
-      alert("Please verify with World ID first (Connect).");
-      return;
-    }
-    if (!canClaim) return;
+      // 3) verify SIWE on the server
+      const verifyRes = await fetch("/api/complete-siwe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payload: finalPayload, nonce }),
+      });
+      const json = await verifyRes.json();
 
-    if (isMiniApp()) {
-      try {
-        setClaiming(true);
-
-        await ensureWorldchain();
-
-        const { finalPayload } = await MiniKit.commandsAsync.verify({
-          action: ACTION_CLAIM,
-          signal: claimSignal,
-          verification_level: MiniVerificationLevel.Orb,
-        });
-
-        if ((finalPayload as any)?.status === "error") {
-          console.error("MiniKit claim error payload:", finalPayload);
-          alert("Claim verification failed.");
-          setClaiming(false);
-          return;
-        }
-
-        await handleVerified(finalPayload as unknown as ISuccessResult);
-      } catch (err) {
-        console.error("MiniKit claim exception:", err);
-        alert("World ID claim error: " + ((err as any)?.message ?? String(err)));
-      } finally {
-        setClaiming(false);
+      if (json.status === "success" && json.isValid) {
+        setIsVerified(true);
+        // Optional: you can also read MiniKit.walletAddress here
+      } else {
+        alert("Sign-in failed. Please try again.");
       }
-    } else if (openIdKit) {
-      openIdKit(); // web fallback
-    } else {
-      alert("Open in World App to claim, or use the web version.");
+    } catch (err) {
+      console.error("WalletAuth unexpected error:", err);
+      alert("Sign-in error.");
     }
   }
 
-  /* --------------- On-chain: claimVerified + local UI update --------------- */
+  /* -------------------- Claim (World ID proof + on-chain tx) --------------- */
   async function handleVerified(res: ISuccessResult) {
     try {
       setClaiming(true);
@@ -276,7 +214,10 @@ export default function DailyTokenClaimOnly() {
     }
   }
 
-  /* --------------------------------- UI ----------------------------------- */
+  // Per-day signal so proofs are unique per day
+  const claimSignal = address ? `${address}:${todayYmdUTC()}` : "0x0";
+
+  /* --------------------------------- Render -------------------------------- */
   return (
     <div className="min-h-screen pb-24" style={{ background: theme.bg, color: theme.text }}>
       {/* Header */}
@@ -355,6 +296,7 @@ export default function DailyTokenClaimOnly() {
 
       {/* Main */}
       <main className="mx-auto max-w-5xl px-4 py-6 space-y-6">
+        {/* Claim card */}
         <section className="rounded-3xl border p-5" style={{ background: "#FFFFFF", borderColor: theme.border }}>
           <div className="text-lg font-semibold">Today’s Reward</div>
           <div className="text-4xl font-extrabold mt-2" style={{ color: theme.primary }}>
@@ -372,66 +314,68 @@ export default function DailyTokenClaimOnly() {
             <div className="w-full h-5 rounded-full overflow-hidden" style={{ background: "#EEF2FF" }}>
               <div
                 className="h-full"
-                style={{
-                  width: `${progressPct}%`,
-                  background: `linear-gradient(90deg, ${theme.primary}, ${theme.accent})`,
-                }}
+                style={{ width: `${progressPct}%`, background: `linear-gradient(90deg, ${theme.primary}, ${theme.accent})` }}
               />
             </div>
           </div>
 
-          {/* Step 1 — VERIFY (MiniKit native; web fallback = IDKit) */}
+          {/* Step 1 — SIGN IN (Wallet Auth) */}
           <div className="mt-6">
-            <IDKitWidget
-              app_id={APP_ID}
-              action={ACTION_VERIFY}
-              signal={"connect-check"} // any stable string (not tied to wallet)
-              verification_level={VerificationLevel.Orb}
-              onSuccess={() => setIsVerified(true)} // web-only path; MiniKit path goes through /api/verify
-              onError={(err) => {
-                console.error("World ID verify error:", err);
-                const msg = typeof err === "string" ? err : (err as any)?.code || (err as any)?.message || JSON.stringify(err);
-                alert("World ID verify error: " + msg);
+            <button
+              onClick={handleWalletAuth}
+              disabled={claiming}
+              className="w-full font-semibold py-3 rounded-2xl shadow active:translate-y-1 disabled:opacity-60"
+              style={{
+                background: isVerified ? "#D1FAE5" : theme.primary,
+                color: "#052e1a",
               }}
             >
-              {({ open }) => (
-                <button
-                  onClick={() => handleVerifyClick(open)}
-                  disabled={claiming}
-                  className="w-full font-semibold py-3 rounded-2xl shadow active:translate-y-1 disabled:opacity-60"
-                  style={{
-                    background: isVerified ? "#D1FAE5" : theme.primary,
-                    color: "#052e1a",
-                  }}
-                >
-                  {isVerified ? "Verified ✅" : "Connect (verify with World ID)"}
-                </button>
-              )}
-            </IDKitWidget>
+              {isVerified ? "Signed in ✅" : "Connect (sign in with Wallet)"}
+            </button>
           </div>
 
-          {/* Step 2 — CLAIM (MiniKit native; web fallback = IDKit) */}
+          {/* Step 2 — CLAIM (fresh proof + on-chain tx) */}
           <div className="mt-3">
             <IDKitWidget
               app_id={APP_ID}
               action={ACTION_CLAIM}
               signal={claimSignal}
               verification_level={VerificationLevel.Orb}
-              onSuccess={(res) => handleVerified(res as ISuccessResult)} // web-only path
+              onSuccess={(res) => handleVerified(res as ISuccessResult)}
               onError={(err) => {
                 console.error("World ID claim error:", err);
-                const msg = typeof err === "string" ? err : (err as any)?.code || (err as any)?.message || JSON.stringify(err);
+                const msg =
+                  typeof err === "string"
+                    ? err
+                    : (err as any)?.code || (err as any)?.message || JSON.stringify(err);
                 alert("World ID claim error: " + msg);
               }}
             >
               {({ open }) => (
                 <button
-                  onClick={() => handleClaimClick(open)}
-                  disabled={!isVerified || !canClaim || claiming}
+                  onClick={() => {
+                    if (!address) {
+                      alert("Open in World App and connect your wallet first.");
+                      return;
+                    }
+                    if (!isVerified) {
+                      alert("Please sign in first.");
+                      return;
+                    }
+                    if (!canClaim) return;
+
+                    const proceed = () => open(); // proof → handleVerified() → wallet tx
+                    if (chainId !== WORLDCHAIN_ID) {
+                      ensureWorldchain().finally(proceed);
+                    } else {
+                      proceed();
+                    }
+                  }}
+                  disabled={!isVerified || !canClaim || !address || claiming}
                   className="w-full font-semibold py-3 rounded-2xl shadow active:translate-y-1 disabled:opacity-60"
                   style={{
-                    background: isVerified && canClaim ? theme.primary : "#D1FAE5",
-                    color: isVerified && canClaim ? "#052e1a" : "#065F46",
+                    background: isVerified && canClaim && address ? theme.primary : "#D1FAE5",
+                    color: isVerified && canClaim && address ? "#052e1a" : "#065F46",
                   }}
                 >
                   {claiming ? "Claiming…" : canClaim ? "Claim with World ID" : `Next claim in ${nextClaimLabel}`}
@@ -480,10 +424,12 @@ function runDevTests() {
     console.assert(formatETA(59_000) === "1m", "formatETA(59s) -> '1m'");
     console.assert(formatETA(60 * 60 * 1000) === "1h 0m", "formatETA(1h)");
     const baseAt = (tc: number) => Math.min(99, Math.floor(tc / 7)) + 1;
-    console.assert(baseAt(0) === 1, "tc0 -> level0 -> base1");
-    console.assert(baseAt(6) === 1, "tc6 -> level0 -> base1");
-    console.assert(baseAt(7) === 2, "tc7 -> level1 -> base2");
-    console.assert(((tc: number) => (tc % 7) + 1)(6) === 7, "day index calc");
+    console.assert(baseAt(0) === 1, "tc0 -> base1");
+    console.assert(baseAt(6) === 1, "tc6 -> base1");
+    console.assert(baseAt(7) === 2, "tc7 -> base2");
+    console.assert(baseAt(70) === 11, "tc70 -> base11");
+    const nextDayIdx = (tc: number) => (tc % 7) + 1;
+    console.assert(nextDayIdx(0) === 1 && nextDayIdx(6) === 7, "day index calc");
     console.log("✅ All tests passed");
     console.groupEnd();
   } catch (e) {

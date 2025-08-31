@@ -1,9 +1,9 @@
 {
   "/_not-found/page": "app/_not-found/page.js",
-  "/api/complete-siwe/route": "app/api/complete-siwe/route.js",
-  "/page": "app/page.js",
   "/test/page": "app/test/page.js",
   "/verify/route": "app/verify/route.js",
+  "/api/nonce/route": "app/api/nonce/route.js",
+  "/api/complete-siwe/route": "app/api/complete-siwe/route.js",
   "/api/env/route": "app/api/env/route.js",
-  "/api/nonce/route": "app/api/nonce/route.js"
+  "/page": "app/page.js"
 }

@@ -10,25 +10,19 @@ interface IRequestPayload {
 export async function POST(req: NextRequest) {
   const { payload, nonce } = (await req.json()) as IRequestPayload;
 
-  if (nonce !== cookies().get("siwe")?.value) {
-    return NextResponse.json({
-      status: "error",
-      isValid: false,
-      message: "Invalid nonce",
-    });
+  const cookieNonce = cookies().get("siwe")?.value;
+  if (!cookieNonce || cookieNonce !== nonce) {
+    return NextResponse.json({ status: "error", isValid: false, message: "Invalid nonce" }, { status: 400 });
   }
 
   try {
-    const valid = await verifySiweMessage(payload, nonce);
-    return NextResponse.json({
-      status: "success",
-      isValid: valid.isValid,
-    });
-  } catch (error: any) {
-    return NextResponse.json({
-      status: "error",
-      isValid: false,
-      message: error?.message ?? "verifySiwe failed",
-    });
+    const res = await verifySiweMessage(payload, nonce);
+    // If you want a session, set a cookie or db flag here.
+    return NextResponse.json({ status: "success", isValid: res.isValid });
+  } catch (err: any) {
+    return NextResponse.json(
+      { status: "error", isValid: false, message: err?.message ?? "verifySiweMessage failed" },
+      { status: 400 },
+    );
   }
 }

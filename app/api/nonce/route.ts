@@ -1,16 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { NextRequest, NextResponse } from "next/server";
 
-export function GET(_req: NextRequest) {
-  const nonce = crypto.randomUUID().replace(/-/g, ""); // >= 8 alphanumeric
-
-  // Store where client can't tamper
-  cookies().set("siwe", nonce, {
-    secure: true,
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-  });
-
+// Must be at least 8 alphanumeric chars
+export async function GET(_req: NextRequest) {
+  const nonce = crypto.randomUUID().replace(/-/g, ""); // alphanumeric
+  // Store server-side so the client can't tamper
+  cookies().set("siwe", nonce, { httpOnly: true, sameSite: "lax", secure: true, path: "/" });
   return NextResponse.json({ nonce });
 }
